@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (C) 2018-2025 Intel Corporation
+ * Copyright (C) 2018-2024 Intel Corporation
  *
  * SPDX-License-Identifier: MIT
  ******************************************************************************/
@@ -30,12 +30,12 @@ struct _GvaAudioTranscribe {
     GstBaseTransform base;
 
     /* properties */
-    gchar *model_path;          /* path to the model (Whisper directory, or custom model path) */
-    gchar *device;              /* inference device (CPU, GPU, etc.) */
-    gchar *model_type;          /* model type: whisper (default), custom types can be implemented */
-    gchar *language;            /* language code for transcription */
-    gchar *task;                /* task: transcribe or translate */
-    gboolean return_timestamps; /* whether to return timestamps */
+    gchar *model_path;              /* path to the model (Whisper directory or wavvec .xml) */
+    gchar *device;                  /* inference device (CPU, GPU, etc.) */
+    gchar *model_type;              /* whisper | wavvec */
+    gchar *language;                /* language code for transcription */
+    gchar *task;                    /* task: transcribe or translate */
+    gboolean return_timestamps;     /* whether to return timestamps */
 
     /* modular handler */
     GvaAudioTranscribeHandler *handler; /* handler implementation - extensible for custom models */

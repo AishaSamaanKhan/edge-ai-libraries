@@ -6,6 +6,7 @@
 
 #include "gstgvaaudiotranscribe.h"
 #include "gstgvawhisperasrhandler.h"
+#include "gstgvawav2vechandler.h"
 #include <fstream>
 #include <gst/analytics/analytics.h>
 #include <gst/analytics/gstanalyticsclassificationmtd.h>
@@ -17,9 +18,9 @@
 #include <string>
 #include <vector>
 
-#define ELEMENT_LONG_NAME "Audio transcription using Whisper models with extensible handler interface"
+#define ELEMENT_LONG_NAME "Audio transcription using Whisper or wav2vec2 models with extensible handler interface"
 #define ELEMENT_DESCRIPTION                                                                                            \
-    "Performs speech recognition using OpenVINO Whisper models. Supports extensible handler interface for custom "     \
+    "Performs speech recognition using OpenVINO Whisper or wav2vec2 models. Supports extensible handler interface for custom "     \
     "model implementations."
 #define SAMPLE_RATE 16000
 
@@ -123,7 +124,7 @@ static void gst_gva_audio_transcribe_set_property(GObject *object, guint prop_id
         gvaaudiotranscribe->device = g_value_dup_string(value);
         break;
     case PROP_MODEL_TYPE:
-        g_free(gvaaudiotranscribe->model_type);
+    	g_free(gvaaudiotranscribe->model_type);
         gvaaudiotranscribe->model_type = g_value_dup_string(value);
         break;
     default:
@@ -167,8 +168,8 @@ static void gst_gva_audio_transcribe_finalize(GObject *object) {
         delete gvaaudiotranscribe->handler;
         gvaaudiotranscribe->handler = nullptr;
     }
-    delete static_cast<std::vector<float> *>(gvaaudiotranscribe->audio_data);
-    delete static_cast<std::mutex *>(gvaaudiotranscribe->mutex);
+    delete static_cast<std::vector<float>*>(gvaaudiotranscribe->audio_data);
+    delete static_cast<std::mutex*>(gvaaudiotranscribe->mutex);
 
     // Call parent finalize
     G_OBJECT_CLASS(gst_gva_audio_transcribe_parent_class)->finalize(object);
@@ -187,10 +188,32 @@ static gboolean gst_gva_audio_transcribe_start(GstBaseTransform *base) {
         return FALSE;
     }
 
+    if (g_strcmp0(gvaaudiotranscribe->model_type, "wavvec") == 0) {
+        if (!g_str_has_suffix(gvaaudiotranscribe->model_path, ".xml")) {
+            GST_ERROR_OBJECT(gvaaudiotranscribe,
+                             "For model_type=wavvec the model must be an OpenVINO IR .xml file (got: %s)",
+                             gvaaudiotranscribe->model_path);
+            return FALSE;
+        }
+    } else if (g_strcmp0(gvaaudiotranscribe->model_type, "whisper") == 0) {
+        /* Accept directory or file path; basic heuristic: if it ends with .xml warn user */
+        if (g_str_has_suffix(gvaaudiotranscribe->model_path, ".xml")) {
+            GST_WARNING_OBJECT(gvaaudiotranscribe,
+                               "model_type=whisper usually expects a model directory, but an .xml was provided (%s). if you wish to use a different supported model mention using model_type parameter.",
+                               gvaaudiotranscribe->model_path);
+        }
+    } else {
+        GST_ERROR_OBJECT(gvaaudiotranscribe, "Unsupported model_type '%s' (expected whisper | wavvec)",
+                         gvaaudiotranscribe->model_type);
+        return FALSE;
+    }
+    
     // Check for supported model types - currently only Whisper is implemented
+
     if (g_strcmp0(gvaaudiotranscribe->model_type, "whisper") == 0) {
-        // Whisper is supported
         gvaaudiotranscribe->handler = new WhisperHandler();
+    } else if (g_strcmp0(gvaaudiotranscribe->model_type, "wavvec") == 0) {
+        gvaaudiotranscribe->handler = new WavVecHandler();
     } else {
         // Provide helpful message for unsupported types
         GST_ERROR_OBJECT(
@@ -205,7 +228,6 @@ static gboolean gst_gva_audio_transcribe_start(GstBaseTransform *base) {
 
     GST_INFO_OBJECT(gvaaudiotranscribe, "Initializing %s handler with model '%s' on device '%s'",
                     gvaaudiotranscribe->model_type, gvaaudiotranscribe->model_path, gvaaudiotranscribe->device);
-
     try {
 
         const std::string language = "<|en|>"; // English language
@@ -243,6 +265,7 @@ static gboolean gst_gva_audio_transcribe_stop(GstBaseTransform *base) {
         delete gvaaudiotranscribe->handler;
         gvaaudiotranscribe->handler = nullptr;
     }
+
 
     auto *audio_data = static_cast<std::vector<float> *>(gvaaudiotranscribe->audio_data);
     audio_data->clear();

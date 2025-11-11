@@ -37,7 +37,7 @@ struct TranscriptionResult {
  * 4. Set model_type parameter to your custom type name
  */
 class GvaAudioTranscribeHandler {
-  public:
+public:
     virtual ~GvaAudioTranscribeHandler() = default;
 
     /**
