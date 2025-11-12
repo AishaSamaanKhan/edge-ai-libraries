@@ -1,4 +1,5 @@
 #include "gstgvawav2vechandler.h"
+#include "ctc_decode.h"
 #include <gst/gst.h>
 #include <fstream>
 #include <stdexcept>
@@ -56,23 +57,54 @@ TranscriptionResult WavVecHandler::transcribe(const std::vector<float> &audio_da
     size_t vocab_size = (shape.size() == 3) ? shape[2] : shape[1];
     float *logits = output_tensor.data<float>();
     std::vector<int64_t> token_ids(time_steps);
+    std::vector<float> token_confidences(time_steps);
+    
+    // Extract token IDs and calculate confidence for each timestep
     for (size_t t = 0; t < time_steps; ++t) {
         float max_val = -1e9f; int64_t max_idx = 0;
+        
+        // Find the maximum logit value and its index
         for (size_t v = 0; v < vocab_size; ++v) {
             float val = logits[t * vocab_size + v];
-            if (val > max_val) { max_val = val; max_idx = v; }
+            if (val > max_val) { 
+                max_val = val; 
+                max_idx = v; 
+            }
         }
         token_ids[t] = max_idx;
+        
+        // Calculate softmax probability for the selected token
+        float sum_exp = 0.0f;
+        for (size_t v = 0; v < vocab_size; ++v) {
+            sum_exp += std::exp(logits[t * vocab_size + v] - max_val);
+        }
+        token_confidences[t] = 1.0f / sum_exp; // Probability of the max token
     }
-    std::string transcription; int64_t prev = -1;
-    for (auto id : token_ids) {
-        if (id == 0 || id == prev) { prev = id; continue; }
-        std::string token = (id < (int64_t)alphabet.size()) ? alphabet[id] : "";
-        if (token == "|") token = " ";
-        transcription += token; prev = id;
+    
+    // Calculate sequence-level confidence based on non-blank, non-duplicate tokens
+    float sequence_confidence = 0.0f;
+    int valid_tokens = 0;
+    int64_t prev = -1;
+    
+    for (size_t t = 0; t < time_steps; ++t) {
+        int64_t current_token = token_ids[t];
+        
+        // Only consider non-blank (!=0) and non-duplicate tokens for confidence
+        if (current_token != 0 && current_token != prev) {
+            sequence_confidence += token_confidences[t];
+            valid_tokens++;
+        }
+        prev = current_token;
     }
-    GST_INFO("WavVecHandler decoded: %s", transcription.c_str());
-    return TranscriptionResult(transcription, 1.0f); // Return with default confidence of 1.0
+    
+    // Average confidence of valid tokens (or 0 if no valid tokens)
+    float final_confidence = (valid_tokens > 0) ? sequence_confidence / valid_tokens : 0.0f;
+    
+    // Use the dedicated CTC decode function
+    std::string transcription = ctc_decode(token_ids, alphabet);
+    
+    GST_INFO("WavVecHandler decoded: %s (confidence: %.3f)", transcription.c_str(), final_confidence);
+    return TranscriptionResult(transcription, final_confidence);
 }
 
 void WavVecHandler::cleanup() {
